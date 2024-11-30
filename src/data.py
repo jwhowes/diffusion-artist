@@ -23,7 +23,7 @@ class ArtImageDataset(Dataset):
             transforms.ToTensor(),
             transforms.Resize(
                 (DataConfig.image_size, DataConfig.image_size),
-                interpolation=transforms.InterpolationMode.BILINEAR,
+                interpolation=transforms.InterpolationMode.BICUBIC,
                 antialias=True
             ),
             transforms.Normalize(
@@ -74,7 +74,7 @@ class ArtConditionalDataset(ArtImageDataset):
 @dataclass
 class DataConfig:
     image_channels: int = 3
-    image_size: int = 56
+    image_size: int = 112
     p_uncond: float = 0.1
 
     mean: Tuple[float, float, float] = (
