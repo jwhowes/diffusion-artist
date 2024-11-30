@@ -164,6 +164,6 @@ class DiffusionConfig:
     d_init: int = 64
     d_t: int = 256
     n_heads: int = 8
-    n_scales: int = 5
+    n_scales: int = 4
     n_cross_attn_scales: int = 3
     window_size: int = 8

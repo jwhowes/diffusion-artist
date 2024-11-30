@@ -66,7 +66,7 @@ if __name__ == "__main__":
 
     dataloader = DataLoader(
         dataset,
-        batch_size=16,
+        batch_size=32,
         shuffle=True,
         pin_memory=True,
         collate_fn=dataset.collate

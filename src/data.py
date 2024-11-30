@@ -64,9 +64,15 @@ class ArtConditionalDataset(ArtImageDataset):
         })
 
     def __getitem__(self, idx):
-        image = super().__getitem__(idx)
+        data = self.ds[idx]
 
-        text = self.ds[idx]["description"]
+        image = self.transform(data["image"])
+
+        text = " / ".join([
+            data["title"],
+            data["style"],
+            data["genre"]
+        ])
 
         return image, text
 
@@ -74,4 +80,4 @@ class ArtConditionalDataset(ArtImageDataset):
 @dataclass
 class DataConfig:
     image_channels: int = 3
-    image_size: int = 128
+    image_size: int = 64
