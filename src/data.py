@@ -1,12 +1,31 @@
+import torch
+
 from torch.utils.data import Dataset
 from datasets import load_dataset
 from torchvision import transforms
 from dataclasses import dataclass
+from transformers import BatchEncoding
 
 
-class ArtistDataset(Dataset):
-    def __init__(self, split="train"):
+class ArtImageDataset(Dataset):
+    def __init__(self, split="train", norm=False):
         self.ds = load_dataset("Artificio/WikiArt", split=split)
+
+        if norm:
+            mean = (
+                0.5218818187713623,
+                0.4685268700122833,
+                0.40528634190559387
+            )
+
+            std = (
+                0.27518653869628906,
+                0.26829564571380615,
+                0.26563310623168945
+            )
+        else:
+            mean = (0.5, 0.5, 0.5)
+            std = (0.5, 0.5, 0.5)
         self.transform = transforms.Compose([
             transforms.ToTensor(),
             transforms.Resize(
@@ -15,7 +34,7 @@ class ArtistDataset(Dataset):
                 antialias=True
             ),
             transforms.Normalize(
-                mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)
+                mean=mean, std=std
             )
         ])
 
@@ -28,7 +47,31 @@ class ArtistDataset(Dataset):
         return self.transform(data["image"])
 
 
+class ArtConditionalDataset(ArtImageDataset):
+    def __init__(self, tokenizer, split="train"):
+        super().__init__(split=split, norm=True)
+        self.tokenizer = tokenizer
+
+    def collate(self, batch):
+        image, text = zip(*batch)
+
+        text_encoding = self.tokenizer(text, return_tensors="pt", padding=True)
+
+        return BatchEncoding({
+            "image": torch.stack(image),
+            "tokens": text_encoding["input_ids"],
+            "attention_mask": text_encoding["attention_mask"]
+        })
+
+    def __getitem__(self, idx):
+        image = super().__getitem__(idx)
+
+        text = self.ds[idx]["description"]
+
+        return image, text
+
+
 @dataclass
 class DataConfig:
     image_channels: int = 3
-    image_size: int = 112
+    image_size: int = 128

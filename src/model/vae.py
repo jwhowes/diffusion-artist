@@ -28,16 +28,16 @@ class VAEConfig:
     d_init: int = 64
     n_heads: int = 4
     n_scales: int = 4
-    window_size: int = 7
+    window_size: int = 8
 
 
 @dataclass
 class DiscriminatorConfig:
     d_model: int = 256
     n_heads: int = 4
-    patch_size: int = 28
+    patch_size: int = 32
     n_blocks: int = 1
-    window_size: int = 7
+    window_size: int = 8
 
 
 class Decoder(nn.Module):
@@ -126,7 +126,7 @@ class Discriminator(nn.Module):
         )
 
     def forward(self, x):
-        x = rearrange(x, "b c (w p1) (h p2) -> (b w h) c p1 p2", p1=self.patch_size, p2=self.patch_size)
+        x = rearrange(x, "b c (h p1) (w p2) -> (b h w) c p1 p2", p1=self.patch_size, p2=self.patch_size)
 
         x = self.stem(x)
         x = self.pooler(self.blocks(x)).squeeze()
