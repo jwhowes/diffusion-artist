@@ -3,8 +3,71 @@ import torch.nn.functional as F
 
 from torch import nn
 from dataclasses import dataclass
+from tqdm import tqdm
 
 from .util import FiLMBlock, FiLMCrossAttentionBlock, SinusoidalEmbedding
+
+
+class DDPMWrapper(nn.Module):
+    def __init__(
+            self, diffusion_model, tokenizer,
+            in_channels=3, image_size=56,
+            mean=(0.0, 0.0, 0.0),
+            std=(1.0, 1.0, 1.0)
+    ):
+        super(DDPMWrapper, self).__init__()
+        self.register_buffer(
+            "mean",
+            torch.tensor(mean).view(1, -1, 1, 1)
+        )
+        self.register_buffer(
+            "std",
+            torch.tensor(std).view(1, -1, 1, 1)
+        )
+
+        self.image_size = image_size
+        self.in_channels = in_channels
+
+        self.diffusion_model = diffusion_model
+        self.diffusion_model.eval()
+        self.diffusion_model.requires_grad_(False)
+
+        self.tokenizer = tokenizer
+
+    @torch.inference_mode()
+    def sample(self, title, style, genre, num_steps=200, guidance_scale=6.0, device=torch.device("cpu")):
+        text = " / ".join([title, style, genre])
+        if guidance_scale > 1.0:
+            text = ["", text]
+        
+        text_encoding = self.tokenizer(text, return_tensors="pt", padding=True).to(device)
+
+        image = torch.randn(1, self.in_channels, self.image_size, self.image_size).to(device)
+        self.diffusion_model.scheduler.set_timesteps(num_steps)
+
+        cond, mask = self.diffusion_model.encode_cond(**text_encoding)
+        for t in tqdm(self.diffusion_model.scheduler.timesteps):
+            if guidance_scale > 1.0:
+                pred = self.diffusion_model.pred_noise(
+                    torch.concat([image] * 2),
+                    t.view(1).repeat(2),
+                    cond,
+                    mask
+                )
+
+                pred_uncond, pred_cond = pred.chunk(2)
+                pred_noise = pred_uncond + guidance_scale * (pred_cond - pred_uncond)
+            else:
+                pred_noise = self.diffusion_model.pred_noise(
+                    image,
+                    t.view(1),
+                    cond,
+                    mask
+                )
+
+            image = self.diffusion_model.scheduler.step(pred_noise, t, image).prev_sample
+
+        return (image.squeeze() * self.std + self.mean).clamp(0.0, 1.0)
 
 
 class ConditionalFiLMUNet(nn.Module):
@@ -70,7 +133,7 @@ class ConditionalFiLMUNet(nn.Module):
                 self.up_blocks.append(FiLMBlock(d_init * (2 ** scale), d_t, n_heads, window_size))
             else:
                 self.up_blocks.append(
-                    FiLMCrossAttentionBlock(d_init * (2 ** scale), d_t, d_cond, n_heads, window_size=8)
+                    FiLMCrossAttentionBlock(d_init * (2 ** scale), d_t, d_cond, n_heads, window_size)
                 )
 
         self.head = nn.Conv2d(d_init, in_channels, kernel_size=1)
@@ -134,8 +197,8 @@ class DiffusionModel(nn.Module):
         )
 
     @torch.no_grad()
-    def encode_cond(self, tokens, attention_mask):
-        cond = self.text_encoder(input_ids=tokens, attention_mask=attention_mask).last_hidden_state
+    def encode_cond(self, input_ids, attention_mask):
+        cond = self.text_encoder(input_ids=input_ids, attention_mask=attention_mask).last_hidden_state
 
         attention_mask = torch.zeros(attention_mask.shape, device=attention_mask.device).masked_fill(
             ~attention_mask.to(torch.bool), float('-inf')
@@ -146,9 +209,9 @@ class DiffusionModel(nn.Module):
     def pred_noise(self, x, t, cond, attention_mask=None):
         return self.unet(x, t, cond, attention_mask)
 
-    def forward(self, image, tokens, attention_mask):
+    def forward(self, image, input_ids, attention_mask):
         B = image.shape[0]
-        cond, attention_mask = self.encode_cond(tokens, attention_mask)
+        cond, attention_mask = self.encode_cond(input_ids, attention_mask)
 
         t = torch.randint(0, self.T, (B,), device=image.device)
         noise = torch.randn_like(image)
@@ -166,4 +229,4 @@ class DiffusionConfig:
     n_heads: int = 8
     n_scales: int = 4
     n_cross_attn_scales: int = 3
-    window_size: int = 8
+    window_size: int = 7

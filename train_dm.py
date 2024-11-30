@@ -49,7 +49,7 @@ def train(model, dataloader):
 
 if __name__ == "__main__":
     tokenizer = AutoTokenizer.from_pretrained("openai/clip-vit-base-patch32")
-    dataset = ArtConditionalDataset(tokenizer)
+    dataset = ArtConditionalDataset(tokenizer, p_uncond=DataConfig.p_uncond)
 
     text_encoder = CLIPTextModel.from_pretrained("openai/clip-vit-base-patch32")
     model = DiffusionModel(
