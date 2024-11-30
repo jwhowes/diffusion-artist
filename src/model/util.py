@@ -59,6 +59,24 @@ class WindowAttention(nn.Module):
         self.window_size = window_size
         self.n_heads = n_heads
 
+        self.rel_pos_bias = nn.Parameter(
+            torch.empty(self.n_heads, (2 * self.window_size - 1) ** 2).normal_(std=0.02)
+        )
+
+        rel_coords = torch.stack(
+            torch.meshgrid([torch.arange(self.window_size)] * 2)
+        )
+        rel_coords = torch.flatten(rel_coords, 1)
+        rel_coords = rel_coords.unsqueeze(-1) - rel_coords.unsqueeze(1)
+        rel_coords = rel_coords.permute(1, 2, 0).contiguous()
+        rel_coords += self.window_size - 1
+        rel_coords[:, :, 0] *= 2 * self.window_size - 1
+        self.register_buffer(
+            "rel_coords",
+            rel_coords.sum(-1),
+            persistent=False
+        )
+
         self.W_q = nn.Linear(d_model, d_model, bias=False)
         self.W_k = nn.Linear(d_model, d_model, bias=False)
         self.W_v = nn.Linear(d_model, d_model, bias=False)
@@ -72,7 +90,7 @@ class WindowAttention(nn.Module):
         k = rearrange(self.W_k(x), "b H W L (n x) -> b H W n L x", n=self.n_heads)
         v = rearrange(self.W_v(x), "b H W L (n x) -> b H W n L x", n=self.n_heads)
 
-        attn = (q @ k.transpose(-2, -1)) / self.scale
+        attn = (q @ k.transpose(-2, -1)) / self.scale + self.rel_pos_bias[:, self.rel_coords]
 
         x = F.softmax(attn, dim=-1) @ v
 
