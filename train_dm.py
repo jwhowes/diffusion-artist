@@ -14,7 +14,7 @@ from src.model.vae import Encoder, VAEConfig
 def train(model, dataloader):
     num_epochs = 5
 
-    opt = torch.optim.Adam(model.parameters(), lr=3e-4)
+    opt = torch.optim.Adam(model.parameters(), lr=5e-5)
 
     lr_scheduler = get_cosine_schedule_with_warmup(
         opt,
@@ -35,6 +35,7 @@ def train(model, dataloader):
 
             loss = model(**encoding)
             accelerator.backward(loss)
+            accelerator.clip_grad_norm_(model.parameters(), 1.0)
 
             opt.step()
             lr_scheduler.step()

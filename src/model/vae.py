@@ -28,14 +28,16 @@ class VAEConfig:
     d_init: int = 128
     n_heads: int = 4
     n_scales: int = 3
+    kl_weight: float = 0.01
+    adv_weight: float = 0.1
 
 
 @dataclass
 class DiscriminatorConfig:
-    d_model: int = 256
+    d_init: int = 64
     n_heads: int = 4
     patch_size: int = 28
-    n_blocks: int = 2
+    n_scales: int = 3
 
 
 class Decoder(nn.Module):
@@ -104,23 +106,30 @@ class Encoder(nn.Module):
 
 
 class Discriminator(nn.Module):
-    def __init__(self, in_channels, d_model, n_heads, patch_size=14, n_blocks=2):
+    def __init__(self, in_channels, d_init, n_heads, patch_size=14, n_scales=2):
         super(Discriminator, self).__init__()
         self.patch_size = patch_size
 
-        self.stem = nn.Conv2d(in_channels, d_model, kernel_size=7, padding=3)
+        self.stem = nn.Conv2d(in_channels, d_init, kernel_size=7, padding=3)
 
-        blocks = [
-            InceptionBlock(d_model, n_heads) for _ in range(n_blocks)
+        blocks = []
+        for scale in range(n_scales - 1):
+            blocks += [
+                InceptionBlock(d_init * (2 ** scale), n_heads),
+                nn.Conv2d(d_init * (2 ** scale), 2 * d_init * (2 ** scale), kernel_size=2, stride=2)
+            ]
+
+        blocks += [
+            InceptionBlock(d_init * (2 ** (n_scales - 1)), n_heads)
         ]
         self.blocks = nn.Sequential(*blocks)
 
         self.pooler = nn.AdaptiveAvgPool2d((1, 1))
 
         self.ffn = nn.Sequential(
-            nn.Linear(d_model, 4 * d_model),
+            nn.Linear(d_init * (2 ** (n_scales - 1)), 4 * d_init * (2 ** (n_scales - 1))),
             nn.GELU(),
-            nn.Linear(4 * d_model, 1)
+            nn.Linear(4 * d_init * (2 ** (n_scales - 1)), 1)
         )
 
     def forward(self, x):

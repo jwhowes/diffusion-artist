@@ -12,8 +12,8 @@ from src.data import ArtImageDataset, DataConfig
 def train(encoder, decoder, discriminator, dataloader, kl_weight=0.01, adv_weight=0.1):
     num_epochs = 5
 
-    opt = torch.optim.Adam(list(encoder.parameters()) + list(decoder.parameters()), lr=3e-4)
-    disc_opt = torch.optim.Adam(discriminator.parameters(), lr=3e-4)
+    opt = torch.optim.Adam(list(encoder.parameters()) + list(decoder.parameters()), lr=5e-5)
+    disc_opt = torch.optim.Adam(discriminator.parameters(), lr=5e-5)
 
     lr_scheduler = get_cosine_schedule_with_warmup(
         opt,
@@ -51,6 +51,7 @@ def train(encoder, decoder, discriminator, dataloader, kl_weight=0.01, adv_weigh
 
             loss = recon_loss + kl_weight * kl_loss + adv_weight * adv_loss
             accelerator.backward(loss)
+            accelerator.clip_grad_norm_(list(encoder.parameters()) + list(decoder.parameters()), 1.0)
 
             opt.step()
             lr_scheduler.step()
@@ -65,6 +66,8 @@ def train(encoder, decoder, discriminator, dataloader, kl_weight=0.01, adv_weigh
             )
 
             accelerator.backward(loss)
+            accelerator.clip_grad_norm_(discriminator.parameters(), 1.0)
+
             disc_opt.step()
             disc_lr_scheduler.step()
 
@@ -107,10 +110,10 @@ if __name__ == "__main__":
 
     discriminator = Discriminator(
         in_channels=DataConfig.image_channels,
-        d_model=DiscriminatorConfig.d_model,
+        d_init=DiscriminatorConfig.d_init,
         n_heads=DiscriminatorConfig.n_heads,
         patch_size=DiscriminatorConfig.patch_size,
-        n_blocks=DiscriminatorConfig.n_blocks
+        n_scales=DiscriminatorConfig.n_scales
     )
 
     dataloader = DataLoader(
@@ -120,4 +123,4 @@ if __name__ == "__main__":
         pin_memory=True
     )
 
-    train(encoder, decoder, discriminator, dataloader, kl_weight=0.05)
+    train(encoder, decoder, discriminator, dataloader, kl_weight=VAEConfig.kl_weight, adv_weight=VAEConfig.adv_weight)
