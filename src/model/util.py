@@ -26,26 +26,19 @@ class RMSFiLM(nn.Module):
         self.beta = nn.Linear(d_t, d_model, bias=False)
 
     def forward(self, x, t):
-        B = x.shape[0]
-
         g = rearrange(self.gamma(t), "b d -> b d 1 1")
         b = rearrange(self.beta(t), "b d -> b d 1 1")
 
         return g * x * torch.rsqrt(x.pow(2).mean(1, keepdim=True) + self.eps) + b
 
 
-class Inception(nn.Module):
+class ConvNeXt(nn.Module):
     def __init__(self, d_model, d_hidden=None, norm_eps=1e-6):
-        super(Inception, self).__init__()
-        assert d_model % 4 == 0
-
+        super(ConvNeXt, self).__init__()
         if d_hidden is None:
             d_hidden = 4 * d_model
 
-        d_conv = d_model // 4
-        self.dwconv_wh = nn.Conv2d(d_conv, d_conv, kernel_size=3, padding=1, groups=d_conv)
-        self.dwconv_w = nn.Conv2d(d_conv, d_conv, kernel_size=(1, 11), padding=(0, 5), groups=d_conv)
-        self.dwconv_h = nn.Conv2d(d_conv, d_conv, kernel_size=(11, 1), padding=(5, 0), groups=d_conv)
+        self.dwconv = nn.Conv2d(d_model, d_model, kernel_size=7, padding=3, groups=d_model)
 
         self.norm = RMSNorm(d_model, eps=norm_eps)
 
@@ -56,30 +49,18 @@ class Inception(nn.Module):
         )
 
     def forward(self, x):
-        x_id, x_wh, x_w, x_h = x.chunk(4, 1)
-
-        x = self.norm(torch.concatenate((
-            x_id,
-            self.dwconv_wh(x_wh),
-            self.dwconv_w(x_w),
-            self.dwconv_h(x_h)
-        ), dim=1)).permute(0, 2, 3, 1)
+        x = self.norm(self.dwconv(x)).permute(0, 2, 3, 1)
 
         return self.ffn(x).permute(0, 3, 1, 2)
 
 
-class FiLMInception(nn.Module):
+class FiLMConvNeXt(nn.Module):
     def __init__(self, d_model, d_t, d_hidden=None, norm_eps=1e-6):
-        super(FiLMInception, self).__init__()
-        assert d_model % 4 == 0
-
+        super(FiLMConvNeXt, self).__init__()
         if d_hidden is None:
             d_hidden = 4 * d_model
 
-        d_conv = d_model // 4
-        self.dwconv_wh = nn.Conv2d(d_conv, d_conv, kernel_size=3, padding=1, groups=d_conv)
-        self.dwconv_w = nn.Conv2d(d_conv, d_conv, kernel_size=(1, 11), padding=(0, 5), groups=d_conv)
-        self.dwconv_h = nn.Conv2d(d_conv, d_conv, kernel_size=(11, 1), padding=(5, 0), groups=d_conv)
+        self.dwconv = nn.Conv2d(d_model, d_model, kernel_size=7, padding=3, groups=d_model)
 
         self.norm = RMSFiLM(d_model, d_t, eps=norm_eps)
 
@@ -90,14 +71,7 @@ class FiLMInception(nn.Module):
         )
 
     def forward(self, x, t):
-        x_id, x_wh, x_w, x_h = x.chunk(4, 1)
-
-        x = self.norm(torch.concatenate((
-            x_id,
-            self.dwconv_wh(x_wh),
-            self.dwconv_w(x_w),
-            self.dwconv_h(x_h)
-        ), dim=1), t).permute(0, 2, 3, 1)
+        x = self.norm(self.dwconv(x), t).permute(0, 2, 3, 1)
 
         return self.ffn(x).permute(0, 3, 1, 2)
 
@@ -171,18 +145,18 @@ class WindowAttention(nn.Module):
         self.W_o = nn.Conv2d(d_model, d_model, kernel_size=1)
 
     def forward(self, x):
-        x = rearrange(x, "b c (H wh) (W ww) -> b H W (wh ww) c", wh=self.window_size, ww=self.window_size)
+        x = rearrange(x, "b c (h wh) (w ww) -> b h w (wh ww) c", wh=self.window_size, ww=self.window_size)
 
-        q = rearrange(self.W_q(x), "b H W L (n x) -> b H W n L x", n=self.n_heads)
-        k = rearrange(self.W_k(x), "b H W L (n x) -> b H W n L x", n=self.n_heads)
-        v = rearrange(self.W_v(x), "b H W L (n x) -> b H W n L x", n=self.n_heads)
+        q = rearrange(self.W_q(x), "b h w l (n d) -> b h w n l d", n=self.n_heads)
+        k = rearrange(self.W_k(x), "b h w l (n d) -> b h w n l d", n=self.n_heads)
+        v = rearrange(self.W_v(x), "b h w l (n d) -> b h w n l d", n=self.n_heads)
 
         attn = (q @ k.transpose(-2, -1)) / self.scale + self.rel_pos_bias[:, self.rel_coords]
 
         x = F.softmax(attn, dim=-1) @ v
 
         return self.W_o(
-            rearrange(x, "b h w n (H W) c -> b (n c) (h H) (w W)", H=self.window_size, W=self.window_size)
+            rearrange(x, "b h w n (wh ww) c -> b (n c) (h wh) (w ww)", wh=self.window_size, ww=self.window_size)
         )
 
 
@@ -192,7 +166,7 @@ class Block(nn.Module):
         self.attn = WindowAttention(d_model, n_heads, window_size=window_size)
         self.attn_norm = RMSNorm(d_model, eps=norm_eps)
 
-        self.ffn = Inception(d_model, norm_eps=norm_eps)
+        self.ffn = ConvNeXt(d_model, norm_eps=norm_eps)
 
     def forward(self, x):
         x = x + self.attn(self.attn_norm(x))
@@ -206,7 +180,7 @@ class FiLMBlock(nn.Module):
         self.attn = WindowAttention(d_model, n_heads, window_size=window_size)
         self.attn_norm = RMSFiLM(d_model, d_t, eps=norm_eps)
 
-        self.ffn = FiLMInception(d_model, d_t, norm_eps=norm_eps)
+        self.ffn = FiLMConvNeXt(d_model, d_t, norm_eps=norm_eps)
 
     def forward(self, x, t):
         x = x + self.attn(self.attn_norm(x, t))
@@ -223,7 +197,7 @@ class FiLMCrossAttentionBlock(nn.Module):
         self.cross_attn = CrossAttention2d(d_model, d_cond, n_heads)
         self.cross_attn_norm = RMSFiLM(d_model, d_t, eps=norm_eps)
 
-        self.ffn = FiLMInception(d_model, d_t, norm_eps=norm_eps)
+        self.ffn = FiLMConvNeXt(d_model, d_t, norm_eps=norm_eps)
 
     def forward(self, x, t, cond, attention_mask=None):
         x = x + self.self_attn(self.self_attn_norm(x, t))

@@ -41,6 +41,12 @@ def train(model, dataloader):
             if i % 25 == 0:
                 print(f"\t{i} / {len(dataloader)} iters.\tLoss: {loss.item():.6f}")
 
+            if i > 0 and i % 1000 == 0:
+                torch.save(
+                    accelerator.get_state_dict(model),
+                    f"dm_ckpts/checkpoint_{epoch + 1:02}.pt"
+                )
+
         torch.save(
             accelerator.get_state_dict(model),
             f"dm_ckpts/checkpoint_{epoch + 1:02}.pt"
@@ -66,7 +72,7 @@ if __name__ == "__main__":
 
     dataloader = DataLoader(
         dataset,
-        batch_size=32,
+        batch_size=24,
         shuffle=True,
         pin_memory=True,
         collate_fn=dataset.collate
