@@ -76,15 +76,14 @@ def train(encoder, decoder, discriminator, dataloader, kl_weight=0.01, adv_weigh
                     f"Adv Loss: {adv_loss.item():.4f}"
                 )
 
-            if i > 0 and i % 1000 == 0:
-                torch.save(
-                    {
-                        "encoder": accelerator.get_state_dict(encoder),
-                        "decoder": accelerator.get_state_dict(decoder),
-                        "discriminator": accelerator.get_state_dict(discriminator)
-                    },
-                    f"vae_ckpts/checkpoint_{epoch + 1:02}.pt"
-                )
+        torch.save(
+            {
+                "encoder": accelerator.get_state_dict(encoder),
+                "decoder": accelerator.get_state_dict(decoder),
+                "discriminator": accelerator.get_state_dict(discriminator)
+            },
+            f"vae_ckpts/checkpoint_{epoch + 1:02}.pt"
+        )
 
 
 if __name__ == "__main__":
@@ -95,8 +94,7 @@ if __name__ == "__main__":
         d_latent=VAEConfig.d_latent,
         d_init=VAEConfig.d_init,
         n_heads=VAEConfig.n_heads,
-        n_scales=VAEConfig.n_scales,
-        window_size=VAEConfig.window_size
+        n_scales=VAEConfig.n_scales
     )
 
     decoder = Decoder(
@@ -104,8 +102,7 @@ if __name__ == "__main__":
         d_latent=VAEConfig.d_latent,
         d_init=VAEConfig.d_init,
         n_heads=VAEConfig.n_heads,
-        n_scales=VAEConfig.n_scales,
-        window_size=VAEConfig.window_size
+        n_scales=VAEConfig.n_scales
     )
 
     discriminator = Discriminator(
@@ -113,8 +110,7 @@ if __name__ == "__main__":
         d_model=DiscriminatorConfig.d_model,
         n_heads=DiscriminatorConfig.n_heads,
         patch_size=DiscriminatorConfig.patch_size,
-        n_blocks=DiscriminatorConfig.n_blocks,
-        window_size=DiscriminatorConfig.window_size
+        n_blocks=DiscriminatorConfig.n_blocks
     )
 
     dataloader = DataLoader(

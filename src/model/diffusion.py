@@ -5,7 +5,7 @@ from torch import nn
 from dataclasses import dataclass
 from tqdm import tqdm
 
-from .util import FiLMBlock, FiLMCrossAttentionBlock, SinusoidalEmbedding
+from .util import FiLMConvNeXtBlock, FiLMCrossAttentionConvNeXtBlock, SinusoidalEmbedding
 
 
 class DDPMWrapper(nn.Module):
@@ -18,11 +18,11 @@ class DDPMWrapper(nn.Module):
         super(DDPMWrapper, self).__init__()
         self.register_buffer(
             "mean",
-            torch.tensor(mean).view(1, -1, 1, 1)
+            torch.tensor(mean).view(-1, 1, 1)
         )
         self.register_buffer(
             "std",
-            torch.tensor(std).view(1, -1, 1, 1)
+            torch.tensor(std).view(-1, 1, 1)
         )
 
         self.image_size = image_size
@@ -73,7 +73,7 @@ class DDPMWrapper(nn.Module):
 class ConditionalFiLMUNet(nn.Module):
     def __init__(
             self, in_channels, d_init, d_t, d_cond, n_heads,
-            window_size=8, n_scales=6, n_cross_attn_scales=4
+            n_scales=6, n_cross_attn_scales=4
     ):
         super(ConditionalFiLMUNet, self).__init__()
         assert n_scales >= n_cross_attn_scales > 0
@@ -94,18 +94,18 @@ class ConditionalFiLMUNet(nn.Module):
         for scale in range(n_scales - 1):
             if scale < n_scales - n_cross_attn_scales:
                 self.down_blocks.append(
-                    FiLMBlock(d_init * (2 ** scale), d_t, n_heads, window_size)
+                    FiLMConvNeXtBlock(d_init * (2 ** scale), d_t, n_heads)
                 )
             else:
                 self.down_blocks.append(
-                    FiLMCrossAttentionBlock(d_init * (2 ** scale), d_t, d_cond, n_heads, window_size)
+                    FiLMCrossAttentionConvNeXtBlock(d_init * (2 ** scale), d_t, d_cond, n_heads)
                 )
             self.down_samples.append(
                 nn.Conv2d(d_init * (2 ** scale), 2 * d_init * (2 ** scale), kernel_size=2, stride=2)
             )
 
-        self.mid_block = FiLMCrossAttentionBlock(
-            d_init * (2 ** (n_scales - 1)), d_t, d_cond, n_heads, window_size
+        self.mid_block = FiLMCrossAttentionConvNeXtBlock(
+            d_init * (2 ** (n_scales - 1)), d_t, d_cond, n_heads
         )
 
         self.up_samples = nn.ModuleList()
@@ -130,10 +130,10 @@ class ConditionalFiLMUNet(nn.Module):
             )
 
             if scale < n_scales - n_cross_attn_scales:
-                self.up_blocks.append(FiLMBlock(d_init * (2 ** scale), d_t, n_heads, window_size))
+                self.up_blocks.append(FiLMConvNeXtBlock(d_init * (2 ** scale), d_t, n_heads))
             else:
                 self.up_blocks.append(
-                    FiLMCrossAttentionBlock(d_init * (2 ** scale), d_t, d_cond, n_heads, window_size)
+                    FiLMCrossAttentionConvNeXtBlock(d_init * (2 ** scale), d_t, d_cond, n_heads)
                 )
 
         self.head = nn.Conv2d(d_init, in_channels, kernel_size=1)
@@ -174,12 +174,18 @@ class ConditionalFiLMUNet(nn.Module):
 
 class DiffusionModel(nn.Module):
     def __init__(
-            self, text_encoder, scheduler, in_channels, d_init, d_t, n_heads,
-            window_size=8, n_scales=5, n_cross_attn_scales=3
+            self, image_encoder, text_encoder, scheduler, in_channels, d_init, d_t, n_heads,
+            n_scales=5, n_cross_attn_scales=3, latent_scale=1.0
     ):
         super(DiffusionModel, self).__init__()
+        self.latent_scale = latent_scale  # TODO
+
         self.scheduler = scheduler
         self.T = self.scheduler.config.num_train_timesteps
+
+        self.image_encoder = image_encoder
+        self.image_encoder.eval()
+        self.image_encoder.requires_grad_(False)
 
         self.text_encoder = text_encoder
         self.text_encoder.eval()
@@ -191,7 +197,6 @@ class DiffusionModel(nn.Module):
             d_t=d_t,
             d_cond=self.text_encoder.config.hidden_size,
             n_heads=n_heads,
-            window_size=window_size,
             n_scales=n_scales,
             n_cross_attn_scales=n_cross_attn_scales
         )
@@ -213,20 +218,21 @@ class DiffusionModel(nn.Module):
         B = image.shape[0]
         cond, attention_mask = self.encode_cond(input_ids, attention_mask)
 
-        t = torch.randint(0, self.T, (B,), device=image.device)
-        noise = torch.randn_like(image)
-        noisy_image = self.scheduler.add_noise(image, noise, t)
+        z = self.image_encoder(image).sample() * self.latent_scale
 
-        pred_noise = self.pred_noise(noisy_image, t, cond, attention_mask)
+        t = torch.randint(0, self.T, (B,), device=image.device)
+        noise = torch.randn_like(z)
+        noisy_z = self.scheduler.add_noise(z, noise, t)
+
+        pred_noise = self.pred_noise(noisy_z, t, cond, attention_mask)
 
         return F.mse_loss(pred_noise, noise)
 
 
 @dataclass
 class DiffusionConfig:
-    d_init: int = 64
+    d_init: int = 128
     d_t: int = 256
     n_heads: int = 8
-    n_scales: int = 5
+    n_scales: int = 3
     n_cross_attn_scales: int = 3
-    window_size: int = 7

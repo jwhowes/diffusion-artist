@@ -4,7 +4,7 @@ from torch import nn
 from dataclasses import dataclass
 from einops import rearrange
 
-from .util import Block
+from .util import InceptionBlock
 
 
 @dataclass
@@ -25,27 +25,25 @@ class DiagonalGaussian:
 @dataclass
 class VAEConfig:
     d_latent: int = 4
-    d_init: int = 64
+    d_init: int = 128
     n_heads: int = 4
-    n_scales: int = 4
-    window_size: int = 8
+    n_scales: int = 3
 
 
 @dataclass
 class DiscriminatorConfig:
     d_model: int = 256
     n_heads: int = 4
-    patch_size: int = 32
-    n_blocks: int = 1
-    window_size: int = 8
+    patch_size: int = 28
+    n_blocks: int = 2
 
 
 class Decoder(nn.Module):
-    def __init__(self, in_channels, d_latent, d_init, n_heads, n_scales=4, window_size=7):
+    def __init__(self, in_channels, d_latent, d_init, n_heads, n_scales=4):
         super(Decoder, self).__init__()
         self.stem = nn.Conv2d(d_latent, d_init * (2 ** (n_scales - 1)), kernel_size=7, padding=3)
 
-        self.mid_block = Block(d_init * (2 ** (n_scales - 1)), n_heads, window_size=window_size)
+        self.mid_block = InceptionBlock(d_init * (2 ** (n_scales - 1)), n_heads)
 
         self.up_blocks = nn.ModuleList()
         self.up_samples = nn.ModuleList()
@@ -56,7 +54,7 @@ class Decoder(nn.Module):
                 kernel_size=2,
                 stride=2)
             )
-            self.up_blocks.append(Block(d_init * (2 ** scale), n_heads, window_size=window_size))
+            self.up_blocks.append(InceptionBlock(d_init * (2 ** scale), n_heads))
 
         self.head = nn.Conv2d(d_init, in_channels, kernel_size=1)
 
@@ -71,7 +69,7 @@ class Decoder(nn.Module):
 
 
 class Encoder(nn.Module):
-    def __init__(self, in_channels, d_latent, d_init, n_heads, n_scales=4, window_size=7):
+    def __init__(self, in_channels, d_latent, d_init, n_heads, n_scales=4):
         super(Encoder, self).__init__()
         self.stem = nn.Conv2d(in_channels, d_init, kernel_size=7, padding=3)
 
@@ -79,14 +77,14 @@ class Encoder(nn.Module):
         self.down_samples = nn.ModuleList()
         for scale in range(n_scales - 1):
             self.down_blocks.append(
-                Block(d_init * (2 ** scale), n_heads, window_size=window_size)
+                InceptionBlock(d_init * (2 ** scale), n_heads)
             )
             self.down_samples.append(
                 nn.Conv2d(d_init * (2 ** scale), 2 * d_init * (2 ** scale), kernel_size=2, stride=2)
             )
 
-        self.mid_block = Block(
-            d_init * (2 ** (n_scales - 1)), n_heads, window_size=window_size
+        self.mid_block = InceptionBlock(
+            d_init * (2 ** (n_scales - 1)), n_heads
         )
 
         self.head = nn.Conv2d(d_init * (2 ** (n_scales - 1)), 2 * d_latent, kernel_size=1)
@@ -106,14 +104,14 @@ class Encoder(nn.Module):
 
 
 class Discriminator(nn.Module):
-    def __init__(self, in_channels, d_model, n_heads, patch_size=14, n_blocks=2, window_size=7):
+    def __init__(self, in_channels, d_model, n_heads, patch_size=14, n_blocks=2):
         super(Discriminator, self).__init__()
         self.patch_size = patch_size
 
         self.stem = nn.Conv2d(in_channels, d_model, kernel_size=7, padding=3)
 
         blocks = [
-            Block(d_model, n_heads, window_size) for _ in range(n_blocks)
+            InceptionBlock(d_model, n_heads) for _ in range(n_blocks)
         ]
         self.blocks = nn.Sequential(*blocks)
 

@@ -41,8 +41,8 @@ class ArtImageDataset(Dataset):
 
 
 class ArtConditionalDataset(ArtImageDataset):
-    def __init__(self, tokenizer, split="train", p_uncond=0.0):
-        super().__init__(split=split, norm=True)
+    def __init__(self, tokenizer, split="train", p_uncond=0.0, norm=False):
+        super().__init__(split=split, norm=norm)
         self.p_uncond = p_uncond
         self.tokenizer = tokenizer
 

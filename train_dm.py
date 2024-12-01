@@ -8,6 +8,7 @@ from accelerate import Accelerator
 
 from src.data import ArtConditionalDataset, DataConfig
 from src.model.diffusion import DiffusionModel, DiffusionConfig
+from src.model.vae import Encoder, VAEConfig
 
 
 def train(model, dataloader):
@@ -41,12 +42,6 @@ def train(model, dataloader):
             if i % 25 == 0:
                 print(f"\t{i} / {len(dataloader)} iters.\tLoss: {loss.item():.6f}")
 
-            if i > 0 and i % 1000 == 0:
-                torch.save(
-                    accelerator.get_state_dict(model),
-                    f"dm_ckpts/checkpoint_{epoch + 1:02}.pt"
-                )
-
         torch.save(
             accelerator.get_state_dict(model),
             f"dm_ckpts/checkpoint_{epoch + 1:02}.pt"
@@ -58,14 +53,23 @@ if __name__ == "__main__":
     dataset = ArtConditionalDataset(tokenizer, p_uncond=DataConfig.p_uncond)
 
     text_encoder = CLIPTextModel.from_pretrained("openai/clip-vit-base-patch32")
+    image_encoder = Encoder(
+        in_channels=DataConfig.image_channels,
+        d_latent=VAEConfig.d_latent,
+        d_init=VAEConfig.d_init,
+        n_heads=VAEConfig.n_heads,
+        n_scales=VAEConfig.n_scales
+    )
+    # TODO. Load ckpt
+
     model = DiffusionModel(
+        image_encoder=image_encoder,
         text_encoder=text_encoder,
         scheduler=DDPMScheduler(),
-        in_channels=DataConfig.image_channels,
+        in_channels=VAEConfig.d_latent,
         d_init=DiffusionConfig.d_init,
         d_t=DiffusionConfig.d_t,
         n_heads=DiffusionConfig.n_heads,
-        window_size=DiffusionConfig.window_size,
         n_scales=DiffusionConfig.n_scales,
         n_cross_attn_scales=DiffusionConfig.n_cross_attn_scales
     )
