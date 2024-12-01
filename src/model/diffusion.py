@@ -8,25 +8,18 @@ from tqdm import tqdm
 from .util import FiLMConvNeXtBlock, FiLMCrossAttentionConvNeXtBlock, SinusoidalEmbedding
 
 
-class DDPMWrapper(nn.Module):
+class LatentDiffusionWrapper(nn.Module):
     def __init__(
-            self, diffusion_model, tokenizer,
-            in_channels=3, image_size=56,
-            mean=(0.0, 0.0, 0.0),
-            std=(1.0, 1.0, 1.0)
+            self, diffusion_model, tokenizer, image_decoder,
+            in_channels=3, latent_size=28
     ):
-        super(DDPMWrapper, self).__init__()
-        self.register_buffer(
-            "mean",
-            torch.tensor(mean).view(-1, 1, 1)
-        )
-        self.register_buffer(
-            "std",
-            torch.tensor(std).view(-1, 1, 1)
-        )
-
-        self.image_size = image_size
+        super(LatentDiffusionWrapper, self).__init__()
+        self.latent_size = latent_size
         self.in_channels = in_channels
+
+        self.image_decoder = image_decoder
+        self.image_decoder.eval()
+        self.image_decoder.requires_grad_(False)
 
         self.diffusion_model = diffusion_model
         self.diffusion_model.eval()
@@ -42,14 +35,14 @@ class DDPMWrapper(nn.Module):
         
         text_encoding = self.tokenizer(text, return_tensors="pt", padding=True).to(device)
 
-        image = torch.randn(1, self.in_channels, self.image_size, self.image_size).to(device)
+        latent = torch.randn(1, self.in_channels, self.latent_size, self.latent_size).to(device)
         self.diffusion_model.scheduler.set_timesteps(num_steps)
 
         cond, mask = self.diffusion_model.encode_cond(**text_encoding)
         for t in tqdm(self.diffusion_model.scheduler.timesteps):
             if guidance_scale > 1.0:
                 pred = self.diffusion_model.pred_noise(
-                    torch.concat([image] * 2),
+                    torch.concat([latent] * 2),
                     t.view(1).repeat(2),
                     cond,
                     mask
@@ -59,15 +52,17 @@ class DDPMWrapper(nn.Module):
                 pred_noise = pred_uncond + guidance_scale * (pred_cond - pred_uncond)
             else:
                 pred_noise = self.diffusion_model.pred_noise(
-                    image,
+                    latent,
                     t.view(1),
                     cond,
                     mask
                 )
 
-            image = self.diffusion_model.scheduler.step(pred_noise, t, image).prev_sample
+            latent = self.diffusion_model.scheduler.step(pred_noise, t, latent).prev_sample
 
-        return (image.squeeze() * self.std + self.mean).clamp(0.0, 1.0)
+        latent = latent.squeeze() / self.diffusion_model.latent_scale
+
+        return ((self.image_decoder(latent) + 1) / 2).clamp(0.0, 1.0)
 
 
 class ConditionalFiLMUNet(nn.Module):
@@ -174,18 +169,19 @@ class ConditionalFiLMUNet(nn.Module):
 
 class DiffusionModel(nn.Module):
     def __init__(
-            self, image_encoder, text_encoder, scheduler, in_channels, d_init, d_t, n_heads,
-            n_scales=5, n_cross_attn_scales=3, latent_scale=1.0
+            self, text_encoder, scheduler, in_channels, d_init, d_t, n_heads,
+            image_encoder=None, n_scales=5, n_cross_attn_scales=3, latent_scale=1.0
     ):
         super(DiffusionModel, self).__init__()
-        self.latent_scale = latent_scale  # TODO
+        self.latent_scale = latent_scale
 
         self.scheduler = scheduler
         self.T = self.scheduler.config.num_train_timesteps
 
         self.image_encoder = image_encoder
-        self.image_encoder.eval()
-        self.image_encoder.requires_grad_(False)
+        if self.image_encoder is not None:
+            self.image_encoder.eval()
+            self.image_encoder.requires_grad_(False)
 
         self.text_encoder = text_encoder
         self.text_encoder.eval()
@@ -236,3 +232,5 @@ class DiffusionConfig:
     n_heads: int = 8
     n_scales: int = 3
     n_cross_attn_scales: int = 3
+    vae_path: str = "vae_ckpts/checkpoint_01.pt"
+    latent_scale: float = 1.0  # TODO

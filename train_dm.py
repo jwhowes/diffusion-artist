@@ -60,7 +60,11 @@ if __name__ == "__main__":
         n_heads=VAEConfig.n_heads,
         n_scales=VAEConfig.n_scales
     )
-    # TODO. Load ckpt
+    ckpt = torch.load(
+        DiffusionModel.vae_path, weights_only=True, map_location=torch.device("cpu")
+    )
+    image_encoder.load_state_dict(ckpt["encoder"])
+    del ckpt
 
     model = DiffusionModel(
         image_encoder=image_encoder,
@@ -71,7 +75,8 @@ if __name__ == "__main__":
         d_t=DiffusionConfig.d_t,
         n_heads=DiffusionConfig.n_heads,
         n_scales=DiffusionConfig.n_scales,
-        n_cross_attn_scales=DiffusionConfig.n_cross_attn_scales
+        n_cross_attn_scales=DiffusionConfig.n_cross_attn_scales,
+        latent_scale=DiffusionConfig.latent_scale
     )
 
     dataloader = DataLoader(
